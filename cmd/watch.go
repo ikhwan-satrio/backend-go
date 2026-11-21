@@ -26,7 +26,7 @@ func runWithWatch(rootDir string, childArgs []string) error {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" || name == "tmp" || name == "node_modules" {
+			if path != rootDir && (strings.HasPrefix(name, ".") || name == "vendor" || name == "tmp" || name == "node_modules") {
 				return filepath.SkipDir
 			}
 			return watcher.Add(path)
@@ -58,10 +58,12 @@ func runWithWatch(rootDir string, childArgs []string) error {
 		build.Dir = rootDir
 		build.Stdout = os.Stdout
 		build.Stderr = os.Stderr
+		fmt.Println("[watch] building...")
 		if err := build.Run(); err != nil {
 			fmt.Printf("[watch] build failed: %v\n", err)
 			return
 		}
+		fmt.Println("[watch] build succeeded")
 
 		cmd := exec.Command(binPath, childArgs...)
 		cmd.Dir = rootDir
