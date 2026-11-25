@@ -14,7 +14,7 @@ type ErrorResponse struct {
 }
 
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	// Batasi ukuran body (misalnya 1 MB) agar aman dari payload raksasa
+	// Limit body size (e.g. 1 MB) to stay safe from huge payloads
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	dec := json.NewDecoder(r.Body)
@@ -44,7 +44,7 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 		}
 	}
 
-	// Pastikan hanya ada 1 objek JSON di body
+	// Ensure the body contains only a single JSON object
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return errors.New("request body must only contain a single JSON object")
 	}

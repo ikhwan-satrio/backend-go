@@ -22,7 +22,6 @@ var serveCmd = &cobra.Command{
 		if watchMode {
 			return nil
 		}
-		_ = config.UseApp()
 		bootstrap := app.NewAppBootstrap()
 		bootstrap.Run()
 		return nil
@@ -33,7 +32,7 @@ var migrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Run GORM database migrations",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		db, err := database.InitDB()
+		db, err := database.InitDB(config.UseApp())
 		if err != nil {
 			return fmt.Errorf("connect db: %w", err)
 		}

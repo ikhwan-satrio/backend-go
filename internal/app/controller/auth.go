@@ -8,13 +8,11 @@ import (
 	"backend-go/internal/dto/users"
 	"backend-go/internal/httpx"
 	"backend-go/internal/middleware"
-	"context"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -22,29 +20,25 @@ import (
 
 type AuthController struct {
 	AppConfig config.AppConfig
+	DB        *gorm.DB
+	Sessions  *auth.SessionService
 }
 
 func (c *AuthController) RegisterPost(w http.ResponseWriter, r *http.Request) {
 	var req users.CreateUserRequest
-	db, err := database.InitDB()
-	ctx := context.Background()
-
-	if err != nil {
-		httpx.Error(w, 300, err.Error())
-		return
-	}
-
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	if req.Name == "" || req.Email == "" {
-		httpx.Error(w, http.StatusBadRequest, "name and email are required")
+	if req.Name == "" || req.Email == "" || req.Password == "" {
+		httpx.Error(w, http.StatusBadRequest, "name, email and password are required")
 		return
 	}
 
-	_, err = gorm.G[database.User](db).Where("email = ?", req.Email).First(ctx)
+	ctx := r.Context()
+
+	_, err := gorm.G[database.User](c.DB).Where("email = ?", req.Email).First(ctx)
 	if err == nil {
 		httpx.Error(w, http.StatusConflict, fmt.Sprintf("email %s is already registered", req.Email))
 		return
@@ -56,6 +50,11 @@ func (c *AuthController) RegisterPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hashedPw, err := bcrypt.GenerateFromPassword([]byte(req.Password), c.AppConfig.PasswordCost)
+	if err != nil {
+		log.Printf("hash password error: %v", err)
+		httpx.Error(w, http.StatusInternalServerError, "failed to create user")
+		return
+	}
 
 	newUsr := &database.User{
 		Name:     req.Name,
@@ -63,20 +62,17 @@ func (c *AuthController) RegisterPost(w http.ResponseWriter, r *http.Request) {
 		Password: string(hashedPw),
 	}
 
-	if err := gorm.G[database.User](db).Create(ctx, newUsr); err != nil {
+	if err := gorm.G[database.User](c.DB).Create(ctx, newUsr); err != nil {
 		httpx.Error(w, http.StatusBadRequest, fmt.Sprintf("error: %s", err.Error()))
 		return
 	}
 
-	httpx.JSON(w, 200, map[string]any{
+	httpx.JSON(w, http.StatusCreated, map[string]any{
 		"message": "user created successfully!",
 	})
 }
 
 func (c *AuthController) LoginPost(w http.ResponseWriter, r *http.Request) {
-	db, err := database.InitDB()
-	ctx := r.Context()
-
 	var req login.LoginRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {
 		httpx.Error(w, http.StatusBadRequest, err.Error())
@@ -89,14 +85,10 @@ func (c *AuthController) LoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if db == nil {
-		log.Println("login error: gorm db is nil")
-		httpx.Error(w, http.StatusInternalServerError, "database unavailable")
-		return
-	}
+	ctx := r.Context()
 
 	var user database.User
-	if err := db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
+	if err := c.DB.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			httpx.Error(w, http.StatusUnauthorized, "invalid email or password")
 			return
@@ -111,37 +103,63 @@ func (c *AuthController) LoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawToken, tokenHash, err := auth.GenerateSessionToken()
+	sess, err := c.Sessions.CreateSession(ctx, w, user.ID)
 	if err != nil {
-		log.Printf("generate session token error: %v", err)
+		log.Printf("create session error: %v", err)
 		httpx.Error(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 
-	expiresAt := time.Now().Add(c.AppConfig.SessionDuration)
-	sess := &database.Session{
-		UserID:    user.ID,
-		TokenHash: tokenHash,
-		ExpiresAt: expiresAt,
-	}
-
-	if err := db.WithContext(ctx).Create(sess).Error; err != nil {
-		log.Printf("save session error: %v", err)
-		httpx.Error(w, http.StatusInternalServerError, "failed to save session")
-		return
-	}
-
-	auth.SetSessionCookie(w, rawToken, expiresAt, false)
-
 	httpx.JSON(w, http.StatusOK, &login.LoginResponse{
 		Message:   "login successful",
-		ExpiresAt: expiresAt,
+		ExpiresAt: sess.ExpiresAt,
 		User: login.User{
 			ID:    user.ID,
 			Name:  user.Name,
 			Email: user.Email,
 		},
 	})
+}
+
+func (c *AuthController) LogoutPost(w http.ResponseWriter, r *http.Request) {
+	if err := c.logout(w, r); err != nil {
+		log.Printf("logout error: %v", err)
+		httpx.Error(w, http.StatusInternalServerError, "failed to logout")
+		return
+	}
+
+	httpx.JSON(w, http.StatusOK, map[string]string{"message": "logout successful"})
+}
+
+func (c *AuthController) LogoutGet(w http.ResponseWriter, r *http.Request) {
+	if err := c.logout(w, r); err != nil {
+		log.Printf("logout error: %v", err)
+		http.Error(w, "failed to logout", http.StatusInternalServerError)
+		return
+	}
+
+	if c.AppConfig.FrontendURL != "" {
+		http.Redirect(w, r, c.AppConfig.FrontendURL, http.StatusSeeOther)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Logged out</title></head>
+<body style="font-family:sans-serif;text-align:center;margin-top:4rem">
+<h1>Logged out successfully</h1>
+<p>Your session has been cleared. You can close this tab.</p>
+</body>
+</html>`)
+}
+
+func (c *AuthController) logout(w http.ResponseWriter, r *http.Request) error {
+	var rawToken string
+	if cookie, err := r.Cookie(c.AppConfig.SessionCookieName); err == nil {
+		rawToken = cookie.Value
+	}
+	return c.Sessions.DeleteSession(r.Context(), w, rawToken)
 }
 
 func (c *AuthController) MeGet(w http.ResponseWriter, r *http.Request) {
@@ -151,14 +169,8 @@ func (c *AuthController) MeGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := database.InitDB()
-	if err != nil {
-		httpx.Error(w, http.StatusInternalServerError, "database unavailable")
-		return
-	}
-
 	var user database.User
-	if err := db.WithContext(r.Context()).First(&user, userID).Error; err != nil {
+	if err := c.DB.WithContext(r.Context()).First(&user, userID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			httpx.Error(w, http.StatusNotFound, "user not found")
 			return

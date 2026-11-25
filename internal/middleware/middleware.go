@@ -8,6 +8,8 @@ import (
 	"context"
 	"net/http"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type contextKey string
@@ -19,13 +21,9 @@ func UserIDFromContext(ctx context.Context) (uint, bool) {
 	return id, ok
 }
 
-func RequireSession() func(http.Handler) http.Handler {
-	db, _ := database.InitDB()
-
+func RequireSession(db *gorm.DB, cfg config.AppConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cfg := config.UseApp()
-
 			cookie, err := r.Cookie(cfg.SessionCookieName)
 			if err != nil || cookie.Value == "" {
 				httpx.Error(w, http.StatusUnauthorized, "unauthorized")

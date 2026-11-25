@@ -12,18 +12,23 @@ import (
 )
 
 type AppConfig struct {
-	DBUrl             string
-	DBPassword        string
-	Port              string
-	SessionCookieName string
-	PasswordCost      int
-	SessionDuration   time.Duration
+	DBUrl              string
+	DBPassword         string
+	Port               string
+	SessionCookieName  string
+	PasswordCost       int
+	SessionDuration    time.Duration
+	IsHTTPS            bool
+	FrontendURL        string
+	GitHubClientID     string
+	GitHubClientSecret string
+	GitHubRedirectURL  string
 }
 
 func UseApp() AppConfig {
-	// Load file .env jika ada (di Docker/produksi biasanya tidak ada file .env, pakai env OS)
+	// Load .env file if present (in Docker/production there is usually no .env file, OS env is used)
 	if err := godotenv.Load(); err != nil {
-		log.Println("File .env tidak ditemukan, menggunakan environment variable sistem")
+		log.Println(".env file not found, using system environment variables")
 	}
 
 	dbHost := getEnv("DB_HOST", "localhost")
@@ -33,17 +38,10 @@ func UseApp() AppConfig {
 	dbPort := getEnv("DB_PORT", "5432")
 	dbSSLMode := getEnv("DB_SSLMODE", "disable")
 
-	// Prioritaskan DATABASE_URL / DB_URL jika diisi, jika kosong rakit DSN dari komponen DB_*
-	dbURL := getEnv("DATABASE_URL", "")
-	if dbURL == "" {
-		dbURL = getEnv("DB_URL", "")
-	}
-	if dbURL == "" {
-		dbURL = fmt.Sprintf(
-			"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Jakarta",
-			dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode,
-		)
-	}
+	dbURL := fmt.Sprintf(
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Jakarta",
+		dbHost, dbUser, dbPassword, dbName, dbPort, dbSSLMode,
+	)
 
 	port := getEnv("APP_PORT", ":3000")
 	if port != "" && port[0] != ':' {
@@ -65,12 +63,17 @@ func UseApp() AppConfig {
 	}
 
 	return AppConfig{
-		DBUrl:             dbURL,
-		DBPassword:        dbPassword,
-		Port:              port,
-		SessionCookieName: getEnv("SESSION_COOKIE_NAME", "session_id"),
-		PasswordCost:      passwordCost,
-		SessionDuration:   sessionDuration,
+		DBUrl:              dbURL,
+		DBPassword:         dbPassword,
+		Port:               port,
+		SessionCookieName:  getEnv("SESSION_COOKIE_NAME", "session_id"),
+		PasswordCost:       passwordCost,
+		SessionDuration:    sessionDuration,
+		IsHTTPS:            getEnvBool("IS_HTTPS", false),
+		FrontendURL:        getEnv("FRONTEND_URL", ""),
+		GitHubClientID:     getEnv("GITHUB_CLIENT_ID", ""),
+		GitHubClientSecret: getEnv("GITHUB_CLIENT_SECRET", ""),
+		GitHubRedirectURL:  getEnv("GITHUB_REDIRECT_URL", ""),
 	}
 }
 
@@ -79,4 +82,18 @@ func getEnv(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	raw, ok := os.LookupEnv(key)
+	if !ok || raw == "" {
+		return fallback
+	}
+
+	val, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Printf("invalid value for %s=%q, using default %t", key, raw, fallback)
+		return fallback
+	}
+	return val
 }

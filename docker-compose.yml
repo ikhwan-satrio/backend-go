@@ -15,7 +15,6 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-backend-go_db}
       DB_SSLMODE: ${DB_SSLMODE:-disable}
-      DATABASE_URL: postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-backend-go_db}?sslmode=${DB_SSLMODE:-disable}&TimeZone=Asia/Jakarta
     env_file:
       - .env
     ports:
@@ -40,7 +39,7 @@ services:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # Opsional: taruh script .sql atau .sh di folder initdb untuk dijalankan saat pertama kali DB dibuat
+      # Optional: place .sql or .sh scripts in the initdb folder to run on first DB creation
       # - ./initdb:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
